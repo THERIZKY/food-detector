@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🍽️ CalorieMeter
 
-## Getting Started
+**CalorieMeter** adalah sebuah aplikasi berbasis web yang dikembangkan sebagai bagian dari proyek mata kuliah **Teknopreneur** di kampus.  
+Proyek ini dikerjakan oleh **Kelompok 25** dengan tujuan membantu pengguna dalam melakukan **pendeteksian dan pencatatan kalori makanan** secara praktis dan terstruktur.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 🎯 Latar Belakang Proyek
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Kesadaran akan pola makan sehat semakin meningkat, namun masih banyak orang yang kesulitan menghitung dan memantau asupan kalori harian.  
+Melalui **CalorieMeter**, kami berupaya menghadirkan solusi digital yang mudah digunakan untuk mendukung gaya hidup sehat.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 🚀 Status Pengembangan
 
-## Learn More
+> ⚠️ **Project ini masih dalam tahap pengembangan (On Development)**
 
-To learn more about Next.js, take a look at the following resources:
+-   Beberapa fitur masih dalam tahap eksperimen
+-   Kode di dalam repository belum sepenuhnya final
+-   Struktur database dan data kalori masih terus diperbarui
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Kontribusi dan masukan sangat kami apresiasi 🙌
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## 📊 Kontribusi Data Kalori
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Saat ini, kami sedang mengumpulkan **data kalori makanan** untuk diintegrasikan ke dalam aplikasi.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Jika kamu:
+
+-   Memahami data nutrisi makanan
+-   Ingin berkontribusi secara langsung
+-   Atau sekadar ingin membantu pengisian database
+
+Silakan kunjungi dan isi spreadsheet berikut:
+
+🔗 **Google Spreadsheet – Database Kalori**  
+https://docs.google.com/spreadsheets/d/1vf7enMsS8lTwov54mUOo3AWYgR9hB4yTtYMEKCekeCk/edit?usp=sharing
+
+---
+
+## ⭐ Dukungan Project
+
+Jika kamu merasa project ini bermanfaat:
+
+-   Jangan ragu untuk memberikan **⭐ Star** pada repository ini
+-   Bagikan ke teman-teman yang mungkin tertarik
+-   Berikan feedback atau saran pengembangan
+
+Dukungan kecil dari kamu sangat berarti bagi keberlanjutan project ini.
+
+---
+
+## 🤝 Penutup
+
+Terima kasih sudah meluangkan waktu untuk melihat **CalorieMeter**.  
+Kami terbuka terhadap kolaborasi, ide, dan kritik konstruktif demi pengembangan aplikasi yang lebih baik ke depannya.
+
+> _Let’s build something impactful together._ 🚀
