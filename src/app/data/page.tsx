@@ -1,4 +1,5 @@
 import BottomNavigation from "@/components/bottom-navigation";
+import FoodAccordion from "@/components/food-accordion";
 
 export default function DataPage() {
     return (
@@ -10,26 +11,13 @@ export default function DataPage() {
                             Data Makanan
                         </h1>
                         <p className="text-sm text-slate-400 mb-6">
-                            Daftar makanan dan informasi kalorinya
+                            Jelajahi makanan dan informasi kalorinya per
+                            kategori
                         </p>
                     </div>
 
-                    <div className="px-4 space-y-3">
-                        {/* Placeholder for food data - will be replaced with actual data */}
-                        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-                            <h3 className="text-white font-semibold">Apple</h3>
-                            <p className="text-emerald-500 text-sm">52 cal</p>
-                        </div>
-                        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-                            <h3 className="text-white font-semibold">Banana</h3>
-                            <p className="text-emerald-500 text-sm">89 cal</p>
-                        </div>
-                        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-                            <h3 className="text-white font-semibold">
-                                Chicken Breast
-                            </h3>
-                            <p className="text-emerald-500 text-sm">165 cal</p>
-                        </div>
+                    <div className="px-4 pb-4">
+                        <FoodAccordion />
                     </div>
                 </div>
             </main>
