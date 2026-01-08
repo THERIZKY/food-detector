@@ -5,124 +5,157 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { getCaloriesForItem, type CalorieInfo } from "@/lib/calorie-db";
+import type { CalorieInfo } from "@/lib/calorie-db";
+import { MODEL_CONFIG } from "@/lib/model-config";
+import { fuzzyMatchFood } from "@/lib/model-config";
+import { CALORIE_DB } from "@/lib/calorie-db";
 
-// types for coco-ssd predictions
-type DetectedObject = {
-    bbox: [number, number, number, number]; // [x, y, width, height]
+declare global {
+    var tmImage: any;
+}
+
+type DetectedFood = {
     class: string;
     score: number;
+    source: "fruits" | "snacks" | "coco";
 };
+
+// --- KONFIGURASI ---
+const DETECTION_DELAY = 500; // Delay 0.5 detik biar gak berat
+const MIN_CONFIDENCE = 0.95; // <-- UBAH DISINI JADI 0.7
 
 export default function FoodDetector() {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const rafRef = useRef<number | null>(null);
-    const modelRef = useRef<any>(null);
+    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    const fruitsModelRef = useRef<any>(null);
+    const snacksModelRef = useRef<any>(null);
+
     const [isReady, setIsReady] = useState(false);
     const [running, setRunning] = useState(true);
-    const [preds, setPreds] = useState<DetectedObject[]>([]);
     const [topFood, setTopFood] = useState<{
         label: string;
         score: number;
+        source: string;
         calories?: CalorieInfo;
     } | null>(null);
     const [cameraError, setCameraError] = useState<string | null>(null);
-    const [videoLoaded, setVideoLoaded] = useState(false); // track when video metadata is loaded
+    const [videoLoaded, setVideoLoaded] = useState(false);
+    const [loadedModels, setLoadedModels] = useState<string[]>([]);
 
-    // initialize camera
+    // 1. Setup Kamera
     useEffect(() => {
         let stream: MediaStream | null = null;
         const setupCamera = async () => {
             try {
-                stream = await navigator.mediaDevices.getUserMedia({
+                if (
+                    !navigator.mediaDevices ||
+                    !navigator.mediaDevices.getUserMedia
+                ) {
+                    throw new Error("Browser tidak support akses kamera.");
+                }
+
+                const isLocalhost =
+                    window.location.hostname === "localhost" ||
+                    window.location.hostname === "127.0.0.1";
+                const isHttps = window.location.protocol === "https:";
+
+                if (!isLocalhost && !isHttps) {
+                    throw new Error("Kamera memerlukan HTTPS.");
+                }
+
+                const constraints = {
                     video: {
-                        facingMode: { ideal: "environment" },
+                        facingMode: "environment",
                         width: { ideal: 720 },
                         height: { ideal: 1280 },
                     },
                     audio: false,
-                });
-                if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
+                };
 
-                    const handleLoadedMetadata = async () => {
-                        try {
-                            const playPromise = videoRef.current?.play();
-                            if (playPromise !== undefined) {
-                                await playPromise;
-                            }
-                            setVideoLoaded(true);
-                        } catch (playErr: any) {
-                            console.error(
-                                "[v0] Play error:",
-                                playErr?.message || playErr
-                            );
-                        }
-                    };
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                if (!videoRef.current) return;
+                videoRef.current.srcObject = stream;
 
-                    videoRef.current.addEventListener(
-                        "loadedmetadata",
-                        handleLoadedMetadata,
-                        { once: true }
-                    );
-                }
+                videoRef.current.onloadedmetadata = async () => {
+                    try {
+                        await videoRef.current?.play();
+                        setVideoLoaded(true);
+                        setCameraError(null);
+                    } catch (e) {
+                        setCameraError("Gagal memainkan video");
+                    }
+                };
             } catch (err: any) {
-                setCameraError(
-                    "Tidak bisa mengakses kamera. Izinkan akses kamera di browser Anda."
-                );
-                console.error("[v0] Camera error:", err?.message || err);
+                setCameraError(err?.message || "Gagal akses kamera");
             }
         };
+
         setupCamera();
         return () => {
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
-            if (stream) {
-                for (const track of stream.getTracks()) track.stop();
-            }
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            if (stream) stream.getTracks().forEach((t) => t.stop());
         };
     }, []);
 
-    // load model (tfjs + coco-ssd)
+    // 2. Load Models
     useEffect(() => {
         let mounted = true;
         const load = async () => {
             try {
-                const [{ default: cocoSsd }, tf] = await Promise.all([
-                    import("@tensorflow-models/coco-ssd"),
-                    import("@tensorflow/tfjs-core"),
-                ]);
+                let attempts = 0;
+                while (!window.tmImage && attempts < 50) {
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    attempts++;
+                }
+                if (!window.tmImage)
+                    throw new Error("Teachable Machine library missing");
 
-                // Import backends to register them in the registry
-                await Promise.all([
-                    import("@tensorflow/tfjs-converter"),
-                    import("@tensorflow/tfjs-backend-webgl"),
-                    import("@tensorflow/tfjs-backend-cpu"), // Import CPU backend as fallback
-                ]);
+                const loaded = [];
 
-                // Wait for TensorFlow to be ready first
-                await tf.ready();
-
-                // Try to set WebGL backend (with CPU as fallback)
-                try {
-                    await tf.setBackend("webgl");
-                    await tf.ready();
-                } catch (webglError) {
-                    console.warn(
-                        "[v0] WebGL backend failed, falling back to CPU:",
-                        webglError
-                    );
-                    await tf.setBackend("cpu");
-                    await tf.ready();
+                if (MODEL_CONFIG.FRUITS.enabled) {
+                    try {
+                        const fruitsModel = await window.tmImage.load(
+                            MODEL_CONFIG.FRUITS.modelPath,
+                            MODEL_CONFIG.FRUITS.modelPath.replace(
+                                "model.json",
+                                "metadata.json"
+                            )
+                        );
+                        if (mounted) {
+                            fruitsModelRef.current = fruitsModel;
+                            loaded.push("fruits");
+                        }
+                    } catch (e) {
+                        console.warn("Fruits model failed", e);
+                    }
                 }
 
-                // load lightweight model variant
-                const model = await cocoSsd.load({ base: "lite_mobilenet_v2" });
-                if (!mounted) return;
-                modelRef.current = model;
+                if (MODEL_CONFIG.SNACKS.enabled) {
+                    try {
+                        const snacksModel = await window.tmImage.load(
+                            MODEL_CONFIG.SNACKS.modelPath,
+                            MODEL_CONFIG.SNACKS.modelPath.replace(
+                                "model.json",
+                                "metadata.json"
+                            )
+                        );
+                        if (mounted) {
+                            snacksModelRef.current = snacksModel;
+                            loaded.push("snacks");
+                        }
+                    } catch (e) {
+                        console.warn("Snacks model failed", e);
+                    }
+                }
+
+                setLoadedModels(loaded);
                 setIsReady(true);
             } catch (err) {
-                console.error("[v0] Failed to load model:", err);
+                console.error(err);
             }
         };
         load();
@@ -131,71 +164,120 @@ export default function FoodDetector() {
         };
     }, []);
 
-    // detection loop - only start when both model is ready AND video is loaded
+    // 3. Logic Deteksi Utama
     useEffect(() => {
         if (!isReady || !running || !videoLoaded) return;
 
         const detect = async () => {
-            if (!modelRef.current || !videoRef.current) return;
-            const model = modelRef.current;
+            if (!videoRef.current) return;
             const video = videoRef.current;
 
             if (video.videoWidth === 0 || video.videoHeight === 0) {
-                rafRef.current = requestAnimationFrame(detect);
+                timeoutRef.current = setTimeout(detect, 100);
                 return;
             }
 
             try {
-                const predictions: DetectedObject[] = await model.detect(video);
+                const predictionPromises = [];
 
-                let dominantObject: DetectedObject | null = null;
-                if (predictions.length > 0) {
-                    // Sort by area (width * height) to get the most dominant object
-                    dominantObject = predictions.reduce((prev, curr) => {
-                        const prevArea = prev.bbox[2] * prev.bbox[3];
-                        const currArea = curr.bbox[2] * curr.bbox[3];
-                        return currArea > prevArea ? curr : prev;
-                    });
+                // Jalankan model secara paralel
+                if (fruitsModelRef.current) {
+                    predictionPromises.push(
+                        fruitsModelRef.current
+                            .predict(video)
+                            .then((preds: any[]) => ({
+                                preds,
+                                source: "fruits",
+                            }))
+                    );
                 }
 
-                const singlePrediction = dominantObject ? [dominantObject] : [];
-                setPreds(singlePrediction);
+                if (snacksModelRef.current) {
+                    predictionPromises.push(
+                        snacksModelRef.current
+                            .predict(video)
+                            .then((preds: any[]) => ({
+                                preds,
+                                source: "snacks",
+                            }))
+                    );
+                }
 
-                const foodCandidates = singlePrediction
-                    .filter((p) => KNOWN_FOOD_CLASSES.has(p.class))
-                    .sort((a, b) => b.score - a.score);
-                if (foodCandidates.length > 0) {
-                    const best = foodCandidates[0];
-                    const info = getCaloriesForItem(best.class);
+                const results = await Promise.all(predictionPromises);
+
+                let allCandidates: DetectedFood[] = [];
+
+                // Kumpulkan kandidat terbaik dari tiap model
+                results.forEach((res: any) => {
+                    const topInModel = res.preds.reduce(
+                        (prev: any, curr: any) =>
+                            curr.probability > prev.probability ? curr : prev
+                    );
+
+                    allCandidates.push({
+                        class: topInModel.className,
+                        score: topInModel.probability,
+                        source: res.source as "fruits" | "snacks",
+                    });
+                });
+
+                // Cari skor tertinggi secara global
+                let winner: DetectedFood | null = null;
+
+                if (allCandidates.length > 0) {
+                    const globalTop = allCandidates.reduce((prev, curr) =>
+                        curr.score > prev.score ? curr : prev
+                    );
+
+                    // Cek threshold 0.7
+                    if (globalTop.score >= MIN_CONFIDENCE) {
+                        winner = globalTop;
+                    }
+                }
+
+                // Update UI
+                if (winner) {
+                    const calorieKey = fuzzyMatchFood(winner.class);
+                    let info: CalorieInfo | undefined;
+                    if (calorieKey && CALORIE_DB[calorieKey]) {
+                        info = CALORIE_DB[calorieKey];
+                    }
+
                     const foodData = {
-                        label: best.class,
-                        score: best.score,
-                        calories: info || undefined,
+                        label: winner.class,
+                        score: winner.score,
+                        source: winner.source,
+                        calories: info,
                     };
+
                     setTopFood(foodData);
-                    drawPredictions(singlePrediction, foodData);
+                    drawPredictions(foodData);
                 } else {
+                    // Jika tidak ada winner (score < 0.7), hapus data & bersihkan layar
                     setTopFood(null);
-                    drawPredictions(singlePrediction, null);
+                    drawPredictions(null);
                 }
             } catch (err) {
                 console.error("[v0] detect error:", err);
             }
-            rafRef.current = requestAnimationFrame(detect);
+
+            // Loop lagi setelah delay
+            timeoutRef.current = setTimeout(detect, DETECTION_DELAY);
         };
 
-        rafRef.current = requestAnimationFrame(detect);
+        detect();
+
         return () => {
-            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
         };
     }, [isReady, running, videoLoaded]);
 
-    // draw overlay
+    // 4. Fungsi Menggambar di Canvas
     const drawPredictions = (
-        predictions: DetectedObject[],
         foodData: {
             label: string;
             score: number;
+            source: string;
             calories?: CalorieInfo;
         } | null
     ) => {
@@ -203,76 +285,59 @@ export default function FoodDetector() {
         const video = videoRef.current;
         if (!canvas || !video) return;
 
-        // sync canvas size with video stream
-        const { videoWidth, videoHeight } = video;
-        if (videoWidth === 0 || videoHeight === 0) return;
-        if (canvas.width !== videoWidth) canvas.width = videoWidth;
-        if (canvas.height !== videoHeight) canvas.height = videoHeight;
+        if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+        if (canvas.height !== video.videoHeight)
+            canvas.height = video.videoHeight;
 
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
+        // PENTING: Selalu hapus layar dulu
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        const stroke = "#10b981";
-        const labelBg = "rgba(16, 185, 129, 0.1)";
-        const labelFg = "#ffffff";
+        // Jika foodData null (tidak ada deteksi > 0.7), berhenti di sini
+        // Hasilnya layar canvas jadi bersih (kotak hilang)
+        if (!foodData) return;
 
-        for (const p of predictions) {
-            const [x, y, w, h] = p.bbox;
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = stroke;
-            ctx.strokeRect(x, y, w, h);
+        // Jika ada data, gambar kotak baru
+        const { videoWidth, videoHeight } = video;
+        const boxW = videoWidth * 0.6;
+        const boxH = videoHeight * 0.4;
+        const x = (videoWidth - boxW) / 2;
+        const y = (videoHeight - boxH) / 2;
 
-            // label box at top
-            const txt = `${p.class} ${(p.score * 100).toFixed(1)}%`;
-            ctx.font =
-                "bold 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-            const textMetrics = ctx.measureText(txt);
-            const padX = 6;
-            const padY = 4;
-            const boxW = textMetrics.width + padX * 2;
-            const boxH = 20;
+        const strokeColor =
+            foodData.source === "fruits" ? "#10b981" : "#f59e0b";
 
-            ctx.fillStyle = labelBg;
-            ctx.fillRect(x, y - boxH, boxW, boxH);
-            ctx.fillStyle = labelFg;
-            ctx.fillText(txt, x + padX, y - 6);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = strokeColor;
+        ctx.strokeRect(x, y, boxW, boxH);
 
-            if (foodData && p.class === foodData.label && foodData.calories) {
-                const calorieText = `${foodData.calories.value} ${foodData.calories.unit}`;
-                const noteText = foodData.calories.note || "takaran umum";
+        const txt = `${foodData.label} ${(foodData.score * 100).toFixed(0)}%`;
+        ctx.font = "bold 18px sans-serif";
+        const textMetrics = ctx.measureText(txt);
 
-                ctx.font =
-                    "bold 16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-                const calMetrics = ctx.measureText(calorieText);
+        ctx.fillStyle = strokeColor;
+        ctx.fillRect(x, y - 30, textMetrics.width + 20, 30);
 
-                ctx.font =
-                    "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-                const noteMetrics = ctx.measureText(noteText);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(txt, x + 10, y - 8);
 
-                const infoBoxW =
-                    Math.max(calMetrics.width, noteMetrics.width) + padX * 2;
-                const infoBoxH = 50;
-                const infoX = x;
-                const infoY = y + h + 5;
+        if (foodData.calories) {
+            const calorieText = `${foodData.calories.value} ${foodData.calories.unit}`;
+            const noteText = foodData.calories.note || "takaran umum";
 
-                // semi-transparent background
-                ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-                ctx.fillRect(infoX, infoY, infoBoxW, infoBoxH);
+            const infoY = y + boxH + 10;
+            ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+            ctx.fillRect(x, infoY, boxW, 60);
 
-                // calorie value
-                ctx.fillStyle = "#10b981";
-                ctx.font =
-                    "bold 16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-                ctx.fillText(calorieText, infoX + padX, infoY + 20);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 20px sans-serif";
+            ctx.fillText(calorieText, x + 10, infoY + 25);
 
-                // note
-                ctx.fillStyle = "#d1d5db";
-                ctx.font =
-                    "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-                ctx.fillText(noteText, infoX + padX, infoY + 38);
-            }
+            ctx.fillStyle = "#d1d5db";
+            ctx.font = "14px sans-serif";
+            ctx.fillText(noteText, x + 10, infoY + 48);
         }
     };
 
@@ -287,43 +352,37 @@ export default function FoodDetector() {
                             ref={videoRef}
                             playsInline
                             muted
-                            aria-label="Kamera untuk deteksi makanan"
                             className="absolute inset-0 w-full h-full object-cover"
                         />
                         <canvas
                             ref={canvasRef}
-                            className={cn(
-                                "absolute inset-0 w-full h-full",
-                                "pointer-events-none"
-                            )}
+                            className="absolute inset-0 w-full h-full pointer-events-none"
                         />
+
                         <div className="absolute left-3 bottom-3 flex items-center gap-2 z-10">
-                            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/50">
-                                {isReady ? "Model siap" : "Memuat model…"}
+                            <Badge
+                                variant={isReady ? "default" : "secondary"}
+                                className="bg-emerald-500/80"
+                            >
+                                {isReady ? "AI Siap" : "Memuat..."}
                             </Badge>
                             <Button
                                 size="sm"
-                                className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                                variant={running ? "destructive" : "default"}
                                 onClick={toggleRunning}
                             >
-                                {running ? "Jeda" : "Lanjut"}
+                                {running ? "Stop" : "Scan"}
                             </Button>
                         </div>
-                        <div className="absolute right-3 top-3 z-10">
-                            <div className="bg-black/80 px-3 py-2 rounded text-xs text-slate-300 space-y-1 border border-slate-700">
-                                <div>Model: COCO-SSD</div>
-                                <div>
-                                    Kamera:{" "}
-                                    {cameraError ? (
-                                        <span className="text-red-400">
-                                            Gagal
-                                        </span>
-                                    ) : (
-                                        <span className="text-emerald-400">
-                                            Aktif
-                                        </span>
-                                    )}
-                                </div>
+
+                        <div className="absolute right-3 top-3 z-10 text-right">
+                            <div className="bg-black/60 p-2 rounded text-xs text-white backdrop-blur-sm">
+                                <div>Limit: {MIN_CONFIDENCE * 100}%</div>
+                                {topFood && (
+                                    <div className="font-bold text-emerald-400">
+                                        {topFood.source.toUpperCase()}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -332,15 +391,3 @@ export default function FoodDetector() {
         </div>
     );
 }
-
-// food classes known in our calorie DB
-const KNOWN_FOOD_CLASSES = new Set<string>([
-    "banana",
-    "apple",
-    "sandwich",
-    "hot dog",
-    "pizza",
-    "donut",
-    "cake",
-    "broccoli",
-]);
