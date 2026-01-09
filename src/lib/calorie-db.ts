@@ -494,6 +494,7 @@ export const CALORIE_DB: Record<string, CalorieInfo> = {
         note: "100",
         unit: "kcal/serving",
     },
+    kopi: { value: 200, note: "1 cup", unit: "kcal/serving" },
 };
 
 export function getvalueForItem(label: string): CalorieInfo | null {
